@@ -1,0 +1,17 @@
+{
+  "name": "opentao-mcp",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-05-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "durable_objects": {
+    "bindings": [{ "name": "OpenTaoMCP", "class_name": "OpenTaoMCP" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["OpenTaoMCP"] }],
+  "vars": {
+    "DATA_URL": "https://opentao.ai/mining-data.json"
+  },
+  "alias": {
+    "ai": "./src/stub-ai.ts"
+  },
+  "observability": { "enabled": true }
+}

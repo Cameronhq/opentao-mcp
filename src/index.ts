@@ -236,6 +236,55 @@ export class OpenTaoMCP extends McpAgent<Env, unknown, {}> {
     );
 
     this.server.registerTool(
+      'estimate_pnl',
+      {
+        description:
+          'Rough mining P&L for one subnet: daily/monthly revenue (avg per-UID emission × token price) minus compute cost. Estimate only — does not include the registration burn, and per-UID emission is an average (most miners earn ~0).',
+        inputSchema: {
+          netuid: z.number().int(),
+          rentalUsdPerHr: z.number().optional().describe('your GPU cost per hour; omit to use the playbook default'),
+          tokenPriceUsd: z.number().optional().describe('alpha token price in USD; omit to use the playbook fallback'),
+          ownedHardware: z.boolean().default(false).describe('true if you already own the GPU — compute cost treated as 0'),
+        },
+      },
+      async ({ netuid, rentalUsdPerHr, tokenPriceUsd, ownedHardware }) => {
+        const d = await loadData(env);
+        const s = d.subnets.find((x) => x.netuid === netuid);
+        if (!s) return json({ error: `no subnet with netuid ${netuid}` });
+        const prof = s.rich?.profitability;
+        if (!prof) {
+          return json({
+            netuid, name: s.name, available: false,
+            message: 'No profitability model for this subnet yet. Use get_subnet for emission + miner counts and estimate manually.',
+            subnetUrl: `https://opentao.ai/beginner/subnets/${s.slug}`,
+          });
+        }
+        const emisPerUid = prof.estimatedDailyEmissionPerUid ?? 0;
+        const price = tokenPriceUsd ?? prof.tokenPriceUsdFallback ?? 0;
+        const revDay = emisPerUid * price;
+        const r = s.rich?.rentalUsdPerHr;
+        const defRental = r ? (r.runpod ?? r.lambda ?? r.coreweave) : undefined;
+        const hr = ownedHardware ? 0 : (rentalUsdPerHr ?? defRental ?? 0);
+        const costDay = hr * 24;
+        const netDay = revDay - costDay;
+        return json({
+          netuid, name: s.name,
+          assumptions: { emissionPerUidTaoPerDay: emisPerUid, tokenPriceUsd: price, computeUsdPerHr: hr, ownedHardware },
+          estimate: {
+            revenueUsdPerDay: +revDay.toFixed(2),
+            computeUsdPerDay: +costDay.toFixed(2),
+            netUsdPerDay: +netDay.toFixed(2),
+            netUsdPerMonth: +(netDay * 30).toFixed(2),
+            verdict: hr > 0 ? (netDay >= 0 ? 'profitable at these inputs' : 'underwater at these inputs') : 'no compute cost assumed',
+          },
+          rewardConcentration: s.miners.rewardConcentration,
+          caveat: 'Rough estimate. Per-UID emission is an average — only the top miners hit it (check rewardConcentration: low = winner-take-all). Token price is volatile and the one-time registration burn is not included. ' + SAFETY,
+          subnetUrl: `https://opentao.ai/beginner/subnets/${s.slug}`,
+        });
+      },
+    );
+
+    this.server.registerTool(
       'get_resources',
       {
         description: 'Pointers to mining resources (wallets, GPU rental, tooling) on opentao.ai.',

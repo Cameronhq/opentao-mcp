@@ -21,13 +21,19 @@ interface Subnet {
   marketCap: string; priceTao: number | null;
   change7d: { display: string; pct: number | null };
   miners: Miners; validators: number;
-  playbook: { status: 'verified' | 'stale' | 'missing'; url: string; hasRich: boolean };
+  playbook: { status: 'verified' | 'draft' | 'missing'; url: string; hasRich: boolean };
   links: { github: string | null; twitter: string | null; site: string | null };
   rich: any | null;
 }
+interface SetupStep {
+  n: number; id: string; title: string; summary: string;
+  bullets: string[];
+  commandsByOs: Partial<Record<'macos' | 'linux' | 'wsl' | 'all', string[]>>;
+}
 interface MiningData {
   source: string; license: string; notice: string; dataFetchedAt: string;
-  counts: Record<string, number>; setupGuideUrl: string; subnets: Subnet[];
+  counts: Record<string, number>; setupGuideUrl: string;
+  setupGuide?: SetupStep[]; subnets: Subnet[];
 }
 
 let CACHE: { data: MiningData; at: number } | null = null;
@@ -83,7 +89,7 @@ export class OpenTaoMCP extends McpAgent<Env, unknown, {}> {
           'List Bittensor subnets with live mining economics (emission, miner counts, reward concentration, 7d price change) and playbook coverage. Filter and sort to scan the field.',
         inputSchema: {
           category: z.string().optional().describe('e.g. llm, vision, audio, data, compute, reason, storage, robotics'),
-          status: z.enum(['verified', 'stale', 'missing']).optional().describe('playbook status'),
+          status: z.enum(['verified', 'draft', 'missing']).optional().describe('playbook status'),
           hasPlaybook: z.boolean().optional().describe('only subnets with a detailed (rich) playbook'),
           sortBy: z.enum(['emission', 'minersEarning', 'rewardConcentration', 'change7d', 'netuid']).default('emission'),
           order: z.enum(['asc', 'desc']).default('desc'),
@@ -168,21 +174,19 @@ export class OpenTaoMCP extends McpAgent<Env, unknown, {}> {
       },
       async ({ os }) => {
         const d = await loadData(env);
-        const install =
-          os === 'macos' ? 'brew install python@3.12 git'
-          : 'sudo apt update && sudo apt install -y python3.12 python3.12-venv python3-pip git build-essential';
+        // Steps come from opentao.ai/mining-data.json (shared src/data/setup-guide.ts),
+        // so the agent guide and the website never drift.
+        const steps = (d.setupGuide ?? []).map((s) => ({
+          n: s.n,
+          title: s.title,
+          detail: s.summary,
+          commands: s.commandsByOs[os] ?? s.commandsByOs.all ?? [],
+          ...(s.bullets.length ? { notes: s.bullets } : {}),
+        }));
         return json({
           os,
           fullGuideUrl: d.setupGuideUrl,
-          steps: [
-            { n: 1, title: 'System requirements', detail: 'Python 3.10–3.12, disk ≥ 50GB, RAM ≥ 16GB. Miners are not supported on native Windows — use WSL2/Linux.' },
-            { n: 2, title: 'Install dependencies', cmd: install },
-            { n: 3, title: 'Install btcli', cmd: 'python3 -m venv ~/.venv-bittensor && source ~/.venv-bittensor/bin/activate && pip install bittensor-cli' },
-            { n: 4, title: 'Create wallet', cmd: 'btcli wallet create --wallet.name my-coldkey --wallet.hotkey my-hot1', note: 'Write down the 12-word mnemonic. No recovery without it.' },
-            { n: 5, title: 'Fund the coldkey', detail: 'Transfer enough TAO to cover the registration burn (see get_subnet for the subnet you want).' },
-            { n: 6, title: 'Register on a subnet', cmd: 'btcli subnet register --netuid <NETUID> --wallet.name my-coldkey --wallet.hotkey my-hot1', note: 'COSTS REAL TAO. Confirm the burn cost before running.' },
-            { n: 7, title: 'Run the subnet miner', detail: 'Follow get_playbook(netuid) for the subnet-specific repo + run command.' },
-          ],
+          steps,
           safety: SAFETY,
         });
       },
